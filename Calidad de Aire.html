@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Dashboard Interactivo – Calidad del Aire</title>
+   <style>
+    :root { --bg:#0b1220; --card:#111a2b; --muted:#a8b3cf; --text:#e6ecff; --accent:#7aa2ff; }
+    body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Inter,sans-serif;background:var(--bg);color:var(--text)}
+    .wrap{max-width:1200px;margin:0 auto;padding:24px}
+    h1{margin:0 0 8px 0;font-size:28px}
+    p.lead{color:var(--muted);margin:0 0 18px}
+    .grid{display:grid;gap:16px}
+    .grid-3{grid-template-columns:1fr 1fr 1fr}
+    @media (max-width:960px){.grid-3{grid-template-columns:1fr}}
+     .card{background:var(--card);border-radius:16px;box-shadow:0 6px 20px rgb(0 0 0 / 0.25);padding:16px}
+    .controls{display:grid;grid-template-columns:repeat(6, 1fr);gap:12px}
+    @media (max-width:1100px){.controls{grid-template-columns:1fr 1fr 1fr}}
+    @media (max-width:720px){.controls{grid-template-columns:1fr 1fr}}
+    label{font-size:12px;color:var(--muted);display:block;margin-bottom:6px}
+    input,select{width:100%;padding:10px;border-radius:10px;border:1px solid #24324d;background:#0c1627;color:var(--text)}
+    .btn{display:inline-flex;align-items:center;gap:8px;justify-content:center;padding:10px 12px;border-radius:10px;border:1px solid #2b3b5e;background:#0e1a2f;color:var(--text);cursor:pointer}
+    .btn:disabled, input:disabled, select:disabled{opacity:0.5;cursor:not-allowed}
+     .pill{display:inline-flex;align-items:center;gap:8px;padding:6px 10px;border:1px solid #283659;border-radius:999px;margin:4px 8px 4px 0;background:#0a1528}
+     .pill input{margin:0}
+    .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+    @media (max-width:960px){.kpis{grid-template-columns:1fr 1fr}}
+    .kpi .label{color:var(--muted);font-size:12px}
+    .kpi .value{font-size:28px;font-weight:600;margin-top:4px}
+    table{width:100%;border-collapse:collapse}
+    th,td{padding:10px 8px;border-bottom:1px solid #2a3a5d;font-size:13px}
+    thead th{color:#b7c3df;text-align:left;background:#0f1a2d;position:sticky;top:0}
+    .muted{color:var(--muted)}
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/date-fns@2.30.0"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0"></script>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Dashboard Interactivo – Calidad del Aire</h1>
+    <p class="lead">Sube un archivo <strong>JSON</strong>para visualizar la información. Los botones de reinicio y exportación estarán deshabilitados hasta cargar datos.</p>
+
+    <section class="card">
+      <div class="controls">
+        <div>
+          <label for="metric">Métrica</label>
+          <select id="metric" disabled>
+            <option value="pm25">PM2.5 (µg/m³)</option>
+            <option value="pm10">PM10 (µg/m³)</option>
+            <option value="o3">Ozono</option>
+            <option value="temp">Temperatura (°C)</option>
+          </select>
+        </div>
+        <div>
+          <label for="from">Desde</label>
+          <input type="date" id="from" disabled/>
+        </div>
+        <div>
+          <label for="to">Hasta</label>
+          <input type="date" id="to" disabled/>
+        </div>
+        <div>
+          <label for="q">Buscar ciudad</label>
+          <input type="text" id="q" placeholder="Ej. Mexicali" disabled/>
+        </div>
+        <div>
+          <label for="file">Subir JSON</label>
+          <input type="file" id="file" accept=".json"/>
+        </div>
+        <div style="display:flex;gap:8px;align-items:end">
+          <button class="btn" id="btnExport" disabled>Exportar CSV</button>
+          <button class="btn" id="btnReset" disabled>Reiniciar</button>
+        </div>
+      </div>
+      <div id="citiesWrap" class="muted" style="margin-top:8px" aria-live="polite"></div>
+      <div class="footer-note">Consejo: abrir este archivo <em>directo</em> en el navegador funciona (no requiere servidor). La carga de datos se hace con input de archivo para evitar CORS.</div>
+    </section>
+
+    <section class="kpis">
+      <div class="card kpi"><div class="label">Promedio</div><div class="value" id="kpiAvg">—</div></div>
+      <div class="card kpi"><div class="label">Máximo</div><div class="value" id="kpiMax">—</div></div>
+      <div class="card kpi"><div class="label">Mínimo</div><div class="value" id="kpiMin">—</div></div>
+      <div class="card kpi"><div class="label">Observaciones</div><div class="value" id="kpiN">—</div></div>
+    </section>
+
+    <section class="grid grid-3" style="margin-top:16px">
+      <div class="card"><canvas id="lineChart" height="240"></canvas></div>
+      <div class="card"><canvas id="barChart" height="240"></canvas></div>
+      <div class="card"><canvas id="scatterChart" height="240"></canvas></div>
+    </section>
+
+    <section class="card" style="margin-top:16px">
+      <div style="overflow:auto;max-height:420px">
+        <table>
+          <thead><tr>
+            <th>Fecha</th><th>Ciudad</th><th>PM2.5</th><th>PM10</th><th>O₃</th><th>Temp °C</th>
+          </tr></thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+
+  <script>
+  const state = { raw: [], filtered: [], cities: [], selectedCities: new Set(), metric:'pm25', charts:{line:null,bar:null,scatter:null} };
+  const els = {
+    metric: document.getElementById('metric'),
+    from: document.getElementById('from'),
+    to: document.getElementById('to'),
+    q: document.getElementById('q'),
+    file: document.getElementById('file'),
+    btnExport: document.getElementById('btnExport'),
+    btnReset: document.getElementById('btnReset'),
+    tbody: document.getElementById('tbody'),
+    citiesWrap: document.getElementById('citiesWrap')
+  };
+
+  function setControlsEnabled(enabled){
+    [els.metric, els.from, els.to, els.q, els.btnExport, els.btnReset].forEach(el=> el.disabled = !enabled);
+  }
+
+  function toCSV(rows){
+    if(!rows.length) return '';
+    const cols = Object.keys(rows[0]);
+    return [cols.join(','), ...rows.map(r=>cols.map(c=>r[c]).join(','))].join('\n');
+  }
+
+  function downloadCSV(rows, name='datos_filtrados.csv'){
+    const blob = new Blob([toCSV(rows)], {type:'text/csv;charset=utf-8;'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href=url; a.download=name; a.click();
+    setTimeout(()=>URL.revokeObjectURL(url),500);
+  }
+
+  function groupBy(arr, key){ return arr.reduce((a,r)=>((a[r[key]] ||= []).push(r),a),{}); }
+
+  // ---------------------- UI: ciudades ----------------------
+  function renderCities(){
+    const wrap = document.getElementById('citiesWrap');
+    if(!state.cities.length){ wrap.innerHTML=''; return; }
+    wrap.innerHTML = '<div style="margin-top:6px">Ciudades:</div>' +
+      state.cities.map(c=>{
+        const id = 'c_'+c.replace(/\W+/g,'_');
+        const checked = state.selectedCities.has(c)? 'checked' : '';
+        return `<label class="pill"><input type="checkbox" id="${id}" ${checked} data-city="${c}"/> ${c}</label>`;
+      }).join('');
+    // eventos
+    wrap.querySelectorAll('input[type=checkbox]').forEach(cb=>{
+      cb.addEventListener('change', (e)=>{
+        const c = e.target.dataset.city;
+        if(e.target.checked) state.selectedCities.add(c); else state.selectedCities.delete(c);
+        applyFiltersAndRender();
+      });
+    });
+  }
+
+  function initFiltersFromData(){
+    const dates = state.raw.map(r=>new Date(r.date)).filter(d=>!isNaN(d));
+    const min = new Date(Math.min(...dates));
+    const max = new Date(Math.max(...dates));
+    const iso = d=> new Date(d.getTime() - d.getTimezoneOffset()*60000).toISOString().slice(0,10);
+    els.from.value = iso(min); els.to.value = iso(max);
+    state.cities = Array.from(new Set(state.raw.map(r=>r.city))).sort();
+    state.selectedCities = new Set(state.cities);
+    renderCities();
+  }
+
+  function getFiltered(){
+    const from = new Date(els.from.value);
+    const to   = new Date(els.to.value); to.setHours(23,59,59,999);
+    const q = (els.q.value||'').toLowerCase();
+    const sel = state.selectedCities;
+    return state.raw.filter(r=>{
+      const d = new Date(r.date);
+      if(!(d>=from && d<=to)) return false;
+      if(!sel.has(r.city)) return false;
+      if(q && !r.city.toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }
+
+  function updateKPIs(rows){
+    const m = state.metric;
+    const vals = rows.map(r=>r[m]).filter(v=>Number.isFinite(v));
+    const avg = vals.length? vals.reduce((a,b)=>a+b,0)/vals.length : NaN;
+    const max = vals.length? Math.max(...vals) : NaN;
+    const min = vals.length? Math.min(...vals) : NaN;
+    document.getElementById('kpiAvg').textContent = Number.isFinite(avg)? avg.toFixed(1) : '—';
+    document.getElementById('kpiMax').textContent = Number.isFinite(max)? max : '—';
+    document.getElementById('kpiMin').textContent = Number.isFinite(min)? min : '—';
+    document.getElementById('kpiN').textContent = rows.length.toLocaleString();
+  }
+
+  function renderTable(rows){
+    els.tbody.innerHTML = rows.slice(0,2000).map(r=>`<tr>
+      <td>${r.date}</td><td>${r.city}</td>
+      <td>${r.pm25 ?? ''}</td><td>${r.pm10 ?? ''}</td>
+      <td>${r.o3 ?? ''}</td><td>${r.temp ?? ''}</td>
+    </tr>`).join('');
+  }
+
+  function ensureCharts(){
+    if(!state.charts.line){
+      state.charts.line = new Chart(document.getElementById('lineChart'), {
+        type:'line', data:{datasets:[]}, options:{ responsive:true, maintainAspectRatio:false, parsing:true,
+          plugins:{ legend:{position:'top'}, tooltip:{ callbacks:{ label:(ctx)=>`${ctx.dataset.label}: ${ctx.parsed.y}` } } },
+          scales:{ x:{ type:'time', time:{ unit:'day' }, title:{display:true,text:'Fecha'} }, y:{ title:{display:true,text:'Valor'} } }
+        }
+      });
+    }
+    if(!state.charts.bar){
+      state.charts.bar = new Chart(document.getElementById('barChart'), {
+        type:'bar', data:{labels:[], datasets:[{label:'Promedio', data:[]}]}, options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}},
+          scales:{ x:{ title:{display:true,text:'Ciudad'} }, y:{ title:{display:true,text:'Promedio'} } }
+        }
+      });
+    }
+    if(!state.charts.scatter){
+      state.charts.scatter = new Chart(document.getElementById('scatterChart'), {
+        type:'scatter', data:{datasets:[]}, options:{ responsive:true, maintainAspectRatio:false,
+          plugins:{ tooltip:{ callbacks:{ label:(ctx)=>{ const d=ctx.raw; return `${d.city} • ${d.date}: (${d.x}°C, ${d.y})`; } } } },
+          scales:{ x:{ title:{display:true,text:'Temperatura (°C)'} }, y:{ title:{display:true,text:'Valor'} } }
+        }
+      });
+    }
+  }
+
+  function updateCharts(rows){
+    const m = state.metric;
+    const labelMap = { pm25:'PM2.5 (µg/m³)', pm10:'PM10 (µg/m³)', o3:'Ozono', temp:'Temperatura (°C)' };
+    const byCity = groupBy(rows, 'city');
+    const datasets = Object.entries(byCity).map(([city, rs])=>({
+      label: city,
+      data: rs.sort((a,b)=>a.date.localeCompare(b.date)).map(r=>({x:r.date,y:r[m]})),
+      tension: 0.25, borderWidth: 2, fill:false
+    }));
+    state.charts.line.data.datasets = datasets;
+    state.charts.line.options.scales.y.title.text = labelMap[m] || m;
+    state.charts.line.update();
+
+    const labels = Object.keys(byCity);
+    const values = labels.map(c=>{
+      const vs = byCity[c].map(r=>r[m]).filter(Number.isFinite);
+      return vs.length? vs.reduce((a,b)=>a+b,0)/vs.length : 0;
+    });
+    state.charts.bar.data.labels = labels;
+    state.charts.bar.data.datasets[0].label = `Promedio de ${m}`;
+    state.charts.bar.data.datasets[0].data = values;
+    state.charts.bar.update();
+
+    if(m==='temp'){
+      state.charts.scatter.data.datasets = [];
+      state.charts.scatter.update();
+    } else {
+      const pts = rows.filter(r=>Number.isFinite(r[m]) && Number.isFinite(r.temp))
+        .map(r=>({x:r.temp, y:r[m], city:r.city, date:r.date}));
+      state.charts.scatter.data.datasets = [{ label:`temp vs ${m}`, data:pts, pointRadius:4 }];
+      state.charts.scatter.update();
+    }
+  }
+
+  function applyFiltersAndRender(){
+    state.metric = els.metric.value;
+    const rows = getFiltered();
+    state.filtered = rows;
+    updateKPIs(rows); renderTable(rows); ensureCharts(); updateCharts(rows);
+  }
+
+  function getFiltered(){
+    const from = new Date(els.from.value);
+    const to   = new Date(els.to.value); to.setHours(23,59,59,999);
+    const q = (els.q.value||'').toLowerCase();
+    const sel = state.selectedCities;
+    return state.raw.filter(r=>{
+      const d = new Date(r.date);
+      if(!(d>=from && d<=to)) return false;
+      if(!sel.has(r.city)) return false;
+      if(q && !r.city.toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }
+
+  function loadData(rows){
+    if(!rows.length){ alert('No se encontraron filas.'); return; }
+    state.raw = rows;
+    initFiltersFromData();
+    setControlsEnabled(true); // habilita filtros y botones cuando hay datos
+    applyFiltersAndRender();
+  }
+
+  // Eventos
+  els.metric.addEventListener('change', applyFiltersAndRender);
+  els.from.addEventListener('change', applyFiltersAndRender);
+  els.to.addEventListener('change', applyFiltersAndRender);
+  els.q.addEventListener('input', applyFiltersAndRender);
+
+  els.file.addEventListener('change', e=>{
+    const file = e.target.files[0]; if(!file) return;
+    const fr = new FileReader();
+    fr.onload = ev => { try{ const arr = JSON.parse(ev.target.result); loadData(arr); } catch(err){ alert('JSON inválido: '+err.message); } };
+    fr.readAsText(file, 'utf-8');
+  });
+
+  els.btnExport.addEventListener('click', ()=>{
+    if(!state.raw.length){ return; }
+    const rows = state.filtered.length ? state.filtered : state.raw;
+    downloadCSV(rows);
+  });
+
+  els.btnReset.addEventListener('click', ()=>{
+    if(!state.raw.length) return;
+    initFiltersFromData();
+    applyFiltersAndRender();
+  });
+  </script>
+</body>
+</html>
